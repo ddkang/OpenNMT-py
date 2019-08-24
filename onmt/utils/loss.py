@@ -11,6 +11,8 @@ import onmt
 from onmt.modules.sparse_losses import SparsemaxLoss
 from onmt.modules.sparse_activations import LogSparsemax
 
+from onmt.utils.dropper import LossDropper
+
 
 def build_loss_compute(model, tgt_field, opt, train=True):
     """
@@ -37,7 +39,7 @@ def build_loss_compute(model, tgt_field, opt, train=True):
     elif isinstance(model.generator[-1], LogSparsemax):
         criterion = SparsemaxLoss(ignore_index=padding_idx, reduction='sum')
     else:
-        criterion = nn.NLLLoss(ignore_index=padding_idx, reduction='sum')
+        criterion = nn.NLLLoss(ignore_index=padding_idx, reduction='sum', reduce=False)
 
     # if the loss function operates on vectors of raw logits instead of
     # probabilities, only the first part of the generator needs to be
@@ -50,7 +52,8 @@ def build_loss_compute(model, tgt_field, opt, train=True):
             criterion, loss_gen, tgt_field.vocab, opt.copy_loss_by_seqlength
         )
     else:
-        compute = NMTLossCompute(criterion, loss_gen)
+        compute = NMTLossCompute(criterion, loss_gen, opt=opt, 
+                                 padding_idx=padding_idx)
     compute.to(device)
 
     return compute
@@ -218,8 +221,14 @@ class NMTLossCompute(LossComputeBase):
     Standard NMT Loss Computation.
     """
 
-    def __init__(self, criterion, generator, normalization="sents"):
+    def __init__(self, criterion, generator, normalization="sents", opt=None,
+                 padding_idx=-100):
         super(NMTLossCompute, self).__init__(criterion, generator)
+        if opt is None:
+            self.dropper = LossDropper()
+        else:
+            self.dropper = LossDropper(
+                    expc=opt.expc, dropc=opt.dropc, min_count=opt.min_count)
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         return {
@@ -234,6 +243,13 @@ class NMTLossCompute(LossComputeBase):
         gtruth = target.view(-1)
 
         loss = self.criterion(scores, gtruth)
+        loss = loss.view(target.shape).sum(dim=1)
+        nb_els = (target != self.padding_idx).sum(dim=1).type(loss.dtype)
+        loss /= nb_els
+        # import pdb; pdb.set_trace()
+        loss = self.dropper(loss)
+        loss *= nb_els # Fix up the division
+        loss = loss.sum()
         stats = self._stats(loss.clone(), scores, gtruth)
 
         return loss, stats

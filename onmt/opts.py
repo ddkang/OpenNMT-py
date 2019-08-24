@@ -305,6 +305,11 @@ def preprocess_opts(parser):
 def train_opts(parser):
     """ Training and saving options """
 
+    group = parser.add_argument_group('Loss dropping')
+    group.add('--expc', type=float, required=True)
+    group.add('--dropc', type=float, required=True)
+    group.add('--min_count', type=int, required=True)
+
     group = parser.add_argument_group('General')
     group.add('--data', '-data', required=True,
               help='Path prefix to the ".train.pt" and '
