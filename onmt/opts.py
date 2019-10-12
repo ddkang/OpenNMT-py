@@ -301,6 +301,15 @@ def preprocess_opts(parser):
               help="Using grayscale image can training "
                    "model faster and smaller")
 
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def train_opts(parser):
     """ Training and saving options """
@@ -309,6 +318,8 @@ def train_opts(parser):
     group.add('--expc', type=float, required=True)
     group.add('--dropc', type=float, required=True)
     group.add('--min_count', type=int, required=True)
+    group.add('--use_dropper', type=str2bool, required=True)
+    group.add('--use_sent_norm', type=str2bool, required=True)
 
     group = parser.add_argument_group('General')
     group.add('--data', '-data', required=True,

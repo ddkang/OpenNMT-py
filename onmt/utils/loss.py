@@ -3,6 +3,8 @@ This includes: LossComputeBase and the standard NMTLossCompute, and
                sharded loss compute stuff.
 """
 from __future__ import division
+import math
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -52,8 +54,10 @@ def build_loss_compute(model, tgt_field, opt, train=True):
             criterion, loss_gen, tgt_field.vocab, opt.copy_loss_by_seqlength
         )
     else:
-        compute = NMTLossCompute(criterion, loss_gen, opt=opt, 
-                                 padding_idx=padding_idx)
+        compute = NMTLossCompute(
+                criterion, loss_gen, opt=opt,
+                padding_idx=padding_idx,
+                tgt_field=tgt_field)
     compute.to(device)
 
     return compute
@@ -222,13 +226,22 @@ class NMTLossCompute(LossComputeBase):
     """
 
     def __init__(self, criterion, generator, normalization="sents", opt=None,
-                 padding_idx=-100):
+                 padding_idx=-100, tgt_field=None):
         super(NMTLossCompute, self).__init__(criterion, generator)
         if opt is None:
             self.dropper = LossDropper()
         else:
             self.dropper = LossDropper(
                     expc=opt.expc, dropc=opt.dropc, min_count=opt.min_count)
+        self.USE_DROPPER = opt.use_dropper
+        self.USE_SENT_NORM = opt.use_sent_norm
+        print(opt)
+
+        self.nb_dropped = 0.0
+        self.dropped_length = 0.0
+        self.nb_all = 0.0
+        self.all_length = 0.0
+        self.tgt_field = tgt_field
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         return {
@@ -242,13 +255,73 @@ class NMTLossCompute(LossComputeBase):
         scores = self.generator(bottled_output)
         gtruth = target.view(-1)
 
+        out_argmax = scores.argmax(dim=1)
+        argmax_loss = self.criterion(scores, out_argmax).view(target.shape)
+        out_argmax = out_argmax.view(target.shape)
+
         loss = self.criterion(scores, gtruth)
-        loss = loss.view(target.shape).sum(dim=1)
-        nb_els = (target != self.padding_idx).sum(dim=1).type(loss.dtype)
-        loss /= nb_els
-        # import pdb; pdb.set_trace()
-        loss = self.dropper(loss)
-        loss *= nb_els # Fix up the division
+        token_loss = loss.view(target.shape).clone()
+        sent_loss = token_loss.sum(dim=0)
+        nb_els = (target != self.padding_idx).sum(dim=0).type(loss.dtype)
+        sent_norm_loss = sent_loss / nb_els
+
+        if self.USE_SENT_NORM:
+            mask = self.dropper(sent_norm_loss)
+        else:
+            mask = self.dropper(sent_loss)
+        loss = loss.view(target.shape)
+        if self.USE_DROPPER:
+            loss *= mask
+        loss = loss.sum(dim=1)
+
+        print(target.shape)
+        for sentence_idx, mask_val in enumerate(mask):
+            if self.USE_DROPPER:
+                cond = lambda: mask_val == 0.0
+            else:
+                cond = lambda: random.randint(0, 10) > 5
+            if cond():
+                # Context
+                for idx in batch.src[0][:, sentence_idx].reshape(-1):
+                    print('{}'.format(self.tgt_field.vocab.itos[idx]), end=' ')
+                print()
+                # Gold
+                for token_idx, idx in enumerate(target[:, sentence_idx]):
+                    print('{:>12}'.format(self.tgt_field.vocab.itos[idx]), end=' ')
+                print()
+                # Gold loss
+                for token_idx in range(len(target[:, sentence_idx])):
+                    print('{:>12.2f}'.format(token_loss[token_idx, sentence_idx].item()), end=' ')
+                print()
+                # Argmax
+                for token_idx in range(len(target[:, sentence_idx])):
+                    out_idx = out_argmax[token_idx, sentence_idx].item()
+                    print('{:>12}'.format(self.tgt_field.vocab.itos[out_idx]),
+                          end=' ')
+                print()
+                # argmax loss
+                for token_idx in range(len(target[:, sentence_idx])):
+                    print('{:>12.2f}'.format(argmax_loss[token_idx, sentence_idx].item()), end=' ')
+                print()
+                print(sent_loss[sentence_idx].item(),
+                      sent_norm_loss[sentence_idx].item(),
+                      nb_els[sentence_idx].item())
+                print()
+        print()
+
+
+        self.nb_dropped += torch.sum(mask == 0.0)
+        self.dropped_length += torch.sum((mask == 0.0).float() * nb_els)
+        self.nb_all += len(mask)
+        self.all_length += torch.sum(nb_els)
+        if int(math.floor(self.nb_all / 100)) % 100 == 0:
+            print('Dropped stats:',
+                  self.nb_dropped, self.dropped_length,
+                  self.dropped_length / self.nb_dropped)
+            print('All stats:',
+                  self.nb_all, self.all_length,
+                  self.all_length / self.nb_all)
+
         loss = loss.sum()
         stats = self._stats(loss.clone(), scores, gtruth)
 

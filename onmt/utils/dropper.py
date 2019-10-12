@@ -7,14 +7,17 @@ class LossDropper(nn.Module):
         super().__init__()
         self.dropc = dropc
         self.count = 0
-        self.min_count = min_count
-        self.vals = np.zeros(self.min_count, dtype=np.float32)
+        # FIXME
+        # self.min_count = min_count
+        self.min_count = int(200000 / dropc - 200000)
 
         # FIXME
-        self.recompute = 1000
+        self.recompute = 10000
         self.last_computed = 0
-        self.percentil_val = 100000000.
+        self.percentile_val = 100000000.
         self.cur_idx = 0
+
+        self.vals = np.zeros(self.recompute, dtype=np.float32)
 
     def forward(self, loss):
         if loss is None:
@@ -23,15 +26,18 @@ class LossDropper(nn.Module):
         self.last_computed += loss.numel()
         self.count += loss.numel()
         if self.count < len(self.vals):
-            self.vals[self.count - loss.numel() : self.count] = loss.detach().cpu().numpy()
+            self.vals[self.count - loss.numel() : self.count] = loss.detach().cpu().numpy().flatten()
             self.cur_idx += loss.numel()
-            return loss
+            # FIXME
+            return (loss < 10000000000).type(loss.dtype)
         else:
             for idx, item in enumerate(loss):
                 self.vals[self.cur_idx] = item
                 self.cur_idx += 1
                 if self.cur_idx >= len(self.vals):
                     self.cur_idx = 0
+        if self.count < self.min_count:
+            return (loss < 10000000000).type(loss.dtype) # FIXME
 
         if self.last_computed > self.recompute:
             self.percentile_val = np.percentile(self.vals, self.dropc * 100)
@@ -39,8 +45,7 @@ class LossDropper(nn.Module):
             self.last_computed = 0
 
         mask = (loss < self.percentile_val).type(loss.dtype)
-        loss *= mask
-        return loss
+        return mask
 
 class MovingLossDropper(nn.Module):
     def __init__(self, expc=0.999, dropc=0.9, min_count=1000):
