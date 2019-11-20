@@ -3,7 +3,7 @@ import torch
 from onmt.translate.decode_strategy import DecodeStrategy
 
 
-def sample_with_temperature(logits, sampling_temp, keep_topk):
+def _obtain_logits(logits, sampling_temp, keep_topk):
     """Select next tokens randomly from the top k possible next tokens.
 
     Samples from a categorical distribution over the ``keep_topk`` words using
@@ -36,6 +36,8 @@ def sample_with_temperature(logits, sampling_temp, keep_topk):
         topk_scores, topk_ids = logits.topk(1, dim=-1)
         if sampling_temp > 0:
             topk_scores /= sampling_temp
+        ignore = torch.lt(logits, topk_scores)
+        logits = logits.masked_fill(ignore, -10000)
     else:
         logits = torch.div(logits, sampling_temp)
 
@@ -53,7 +55,11 @@ def sample_with_temperature(logits, sampling_temp, keep_topk):
             logits=logits, total_count=1)
         topk_ids = torch.argmax(dist.sample(), dim=1, keepdim=True)
         topk_scores = logits.gather(dim=1, index=topk_ids)
-    return topk_ids, topk_scores
+    return logits, topk_ids, topk_scores
+
+
+def sample_with_temperature(logits, sampling_temp, keep_topk):
+    return _obtain_logits(logits, sampling_temp, keep_topk)[1:]
 
 
 class RandomSampling(DecodeStrategy):

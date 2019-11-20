@@ -14,7 +14,7 @@ import onmt.translate.beam
 import onmt.inputters as inputters
 import onmt.decoders.ensemble
 from onmt.translate.beam_search import BeamSearch
-from onmt.translate.random_sampling import RandomSampling
+from onmt.translate.random_sampling import RandomSampling, _obtain_logits
 from onmt.utils.misc import tile, set_random_seed
 from onmt.modules.copy_generator import collapse_copy_scores
 
@@ -270,11 +270,13 @@ class Translator(object):
             print(msg)
 
     def _gold_score(self, batch, memory_bank, src_lengths, src_vocabs,
-                    use_src_map, enc_states, batch_size, src):
+                    use_src_map, enc_states, batch_size, src,
+                    topk=None, topp=None):
         if "tgt" in batch.__dict__:
             gs = self._score_target(
                 batch, memory_bank, src_lengths, src_vocabs,
-                batch.src_map if use_src_map else None)
+                batch.src_map if use_src_map else None,
+                topk=topk, topp=topp)
             self.model.decoder.init_state(src, memory_bank, enc_states)
         else:
             gs = [0] * batch_size
@@ -463,7 +465,8 @@ class Translator(object):
             "batch": batch,
             "gold_score": self._gold_score(
                 batch, memory_bank, src_lengths, src_vocabs, use_src_map,
-                enc_states, batch_size, src)}
+                enc_states, batch_size, src,
+                topk=keep_topk, topp=None)} # FIXME
 
         memory_lengths = src_lengths
         src_map = batch.src_map if use_src_map else None
@@ -822,13 +825,19 @@ class Translator(object):
         return results
 
     def _score_target(self, batch, memory_bank, src_lengths,
-                      src_vocabs, src_map):
+                      src_vocabs, src_map, topk=None, topp=None):
         tgt = batch.tgt
         tgt_in = tgt[:-1]
 
         log_probs, attn = self._decode_and_generate(
             tgt_in, memory_bank, batch, src_vocabs,
             memory_lengths=src_lengths, src_map=src_map)
+
+        if topk is not None or topp is not None:
+            for idx in range(len(log_probs)):
+                logits = log_probs[idx]
+                # FIXME: topp
+                log_probs[idx] = _obtain_logits(logits, 1.0, topk)[0]
 
         log_probs[:, :, self._tgt_pad_idx] = 0
         gold = tgt[1:]
@@ -841,6 +850,8 @@ class Translator(object):
         if words_total == 0:
             msg = "%s No words predicted" % (name,)
         else:
+            if score_total < -100:
+                return 'Math overflow'
             msg = ("%s AVG SCORE: %.4f, %s PPL: %.4f" % (
                 name, score_total / words_total,
                 name, math.exp(-score_total / words_total)))
