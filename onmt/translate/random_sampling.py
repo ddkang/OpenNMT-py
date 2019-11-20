@@ -94,6 +94,7 @@ class RandomSampling(DecodeStrategy):
         self.sampling_temp = sampling_temp
         self.keep_topk = keep_topk
         self.topk_scores = None
+        self.pred_scores = None
         self.memory_length = memory_length
         self.batch_size = batch_size
         self.select_indices = torch.arange(self.batch_size,
@@ -118,6 +119,10 @@ class RandomSampling(DecodeStrategy):
         self.block_ngram_repeats(log_probs)
         topk_ids, self.topk_scores = sample_with_temperature(
             log_probs, self.sampling_temp, self.keep_topk)
+        if self.pred_scores is None:
+            self.pred_scores = self.topk_scores
+        else:
+            self.pred_scores[self.select_indices] += self.topk_scores
 
         self.is_finished = topk_ids.eq(self.eos)
 
@@ -135,7 +140,8 @@ class RandomSampling(DecodeStrategy):
         finished_batches = self.is_finished.view(-1).nonzero()
         for b in finished_batches.view(-1):
             b_orig = self.original_batch_idx[b]
-            self.scores[b_orig].append(self.topk_scores[b, 0])
+            # self.scores[b_orig].append(self.topk_scores[b, 0])
+            self.scores[b_orig].append(self.pred_scores[b, 0])
             self.predictions[b_orig].append(self.alive_seq[b, 1:])
             self.attention[b_orig].append(
                 self.alive_attn[:, b, :self.memory_length[b]]

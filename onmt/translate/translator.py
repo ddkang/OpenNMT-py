@@ -363,7 +363,10 @@ class Translator(object):
                 n_best_preds = [" ".join(pred)
                                 for pred in trans.pred_sents[:self.n_best]]
                 all_predictions += [n_best_preds]
-                self.out_file.write('\n'.join(n_best_preds) + '\n')
+                self.out_file.write(
+                        str(trans.pred_scores[0].item()) + ' ' +\
+                        str(trans.gold_score.item()) + ' ' +\
+                        '\n'.join(n_best_preds) + '\n')
                 self.out_file.flush()
 
                 if self.verbose:
