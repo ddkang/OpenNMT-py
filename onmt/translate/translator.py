@@ -115,6 +115,7 @@ class Translator(object):
             ratio=0.,
             beam_size=30,
             random_sampling_topk=1,
+            random_sampling_topp=-1,
             random_sampling_temp=1,
             stepwise_penalty=None,
             dump_beam=False,
@@ -154,6 +155,7 @@ class Translator(object):
         self.beam_size = beam_size
         self.random_sampling_temp = random_sampling_temp
         self.sample_from_topk = random_sampling_topk
+        self.sample_from_topp = random_sampling_topp
 
         self.min_length = min_length
         self.ratio = ratio
@@ -244,6 +246,7 @@ class Translator(object):
             ratio=opt.ratio,
             beam_size=opt.beam_size,
             random_sampling_topk=opt.random_sampling_topk,
+            random_sampling_topp=opt.random_sampling_topp,
             random_sampling_temp=opt.random_sampling_temp,
             stepwise_penalty=opt.stepwise_penalty,
             dump_beam=opt.dump_beam,
@@ -442,6 +445,7 @@ class Translator(object):
             min_length=0,
             sampling_temp=1.0,
             keep_topk=-1,
+            keep_topp=-1,
             return_attention=False):
         """Alternative to beam search. Do random sampling at each step."""
 
@@ -466,7 +470,7 @@ class Translator(object):
             "gold_score": self._gold_score(
                 batch, memory_bank, src_lengths, src_vocabs, use_src_map,
                 enc_states, batch_size, src,
-                topk=keep_topk, topp=None)} # FIXME
+                topk=keep_topk, topp=keep_topp)}
 
         memory_lengths = src_lengths
         src_map = batch.src_map if use_src_map else None
@@ -480,7 +484,7 @@ class Translator(object):
             self._tgt_pad_idx, self._tgt_bos_idx, self._tgt_eos_idx,
             batch_size, mb_device, min_length, self.block_ngram_repeat,
             self._exclusion_idxs, return_attention, self.max_length,
-            sampling_temp, keep_topk, memory_lengths)
+            sampling_temp, keep_topk, memory_lengths, keep_topp)
 
         for step in range(max_length):
             # Shape: (1, B, 1)
@@ -538,6 +542,7 @@ class Translator(object):
                     min_length=self.min_length,
                     sampling_temp=self.random_sampling_temp,
                     keep_topk=self.sample_from_topk,
+                    keep_topp=self.sample_from_topp,
                     return_attention=attn_debug or self.replace_unk)
             else:
                 return self._translate_batch(
@@ -836,8 +841,7 @@ class Translator(object):
         if topk is not None or topp is not None:
             for idx in range(len(log_probs)):
                 logits = log_probs[idx]
-                # FIXME: topp
-                log_probs[idx] = _obtain_logits(logits, 1.0, topk)[0]
+                log_probs[idx] = _obtain_logits(logits, 1.0, topk, topp)[0]
 
         log_probs[:, :, self._tgt_pad_idx] = 0
         gold = tgt[1:]

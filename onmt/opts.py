@@ -644,6 +644,8 @@ def translate_opts(parser):
                    "sampling restricted to the k most likely next tokens. "
                    "Set this to 1 to use argmax or for doing beam "
                    "search.")
+    group.add('--random_sampling_topp', '-random_sampling_topp',
+              default=-1, type=float)
     group.add('--random_sampling_temp', '-random_sampling_temp',
               default=1., type=float,
               help="If doing random sampling, divide the logits by "

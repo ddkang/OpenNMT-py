@@ -1,9 +1,10 @@
 import torch
+import torch.nn.functional as F
 
 from onmt.translate.decode_strategy import DecodeStrategy
 
 
-def _obtain_logits(logits, sampling_temp, keep_topk):
+def _obtain_logits(logits, sampling_temp, keep_topk, keep_topp):
     """Select next tokens randomly from the top k possible next tokens.
 
     Samples from a categorical distribution over the ``keep_topk`` words using
@@ -41,7 +42,20 @@ def _obtain_logits(logits, sampling_temp, keep_topk):
     else:
         logits = torch.div(logits, sampling_temp)
 
-        if keep_topk > 0:
+        # Do top-p first
+        if keep_topp > 0:
+            logits_sort = torch.sort(logits, dim=1, descending=True)[0]
+            probs = F.softmax(logits, dim=1)
+            psum = torch.cumsum(probs, dim=1)
+            logits_masked = torch.where(
+                    psum < keep_topp, logits_sort,
+                    torch.ones_like(logits_sort) * 1000000)
+            min_logits = torch.min(logits_masked, dim=1)[0]
+            min_logits = min_logits.unsqueeze(-1).repeat(1, logits.size()[1])
+
+            ignore = torch.lt(logits, min_logits)
+            logits = logits.masked_fill(ignore, -10000)
+        elif keep_topk > 0:
             top_values, top_indices = torch.topk(logits, keep_topk, dim=1)
             kth_best = top_values[:, -1].view([-1, 1])
             kth_best = kth_best.repeat([1, logits.shape[1]]).float()
@@ -58,8 +72,8 @@ def _obtain_logits(logits, sampling_temp, keep_topk):
     return logits, topk_ids, topk_scores
 
 
-def sample_with_temperature(logits, sampling_temp, keep_topk):
-    return _obtain_logits(logits, sampling_temp, keep_topk)[1:]
+def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp):
+    return _obtain_logits(logits, sampling_temp, keep_topk, keep_topp)[1:]
 
 
 class RandomSampling(DecodeStrategy):
@@ -92,13 +106,14 @@ class RandomSampling(DecodeStrategy):
     def __init__(self, pad, bos, eos, batch_size, device,
                  min_length, block_ngram_repeat, exclusion_tokens,
                  return_attention, max_length, sampling_temp, keep_topk,
-                 memory_length):
+                 memory_length, keep_topp):
         super(RandomSampling, self).__init__(
             pad, bos, eos, batch_size, device, 1,
             min_length, block_ngram_repeat, exclusion_tokens,
             return_attention, max_length)
         self.sampling_temp = sampling_temp
         self.keep_topk = keep_topk
+        self.keep_topp = keep_topp
         self.topk_scores = None
         self.pred_scores = None
         self.memory_length = memory_length
@@ -124,7 +139,7 @@ class RandomSampling(DecodeStrategy):
         self.ensure_min_length(log_probs)
         self.block_ngram_repeats(log_probs)
         topk_ids, self.topk_scores = sample_with_temperature(
-            log_probs, self.sampling_temp, self.keep_topk)
+            log_probs, self.sampling_temp, self.keep_topk, self.keep_topp)
         if self.pred_scores is None:
             self.pred_scores = self.topk_scores
         else:
