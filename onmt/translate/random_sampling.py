@@ -4,7 +4,8 @@ import torch.nn.functional as F
 from onmt.translate.decode_strategy import DecodeStrategy
 
 
-def _obtain_logits(logits, sampling_temp, keep_topk, keep_topp):
+def _obtain_logits(logits, sampling_temp, keep_topk, keep_topp,
+                   return_topk=True):
     """Select next tokens randomly from the top k possible next tokens.
 
     Samples from a categorical distribution over the ``keep_topk`` words using
@@ -65,11 +66,15 @@ def _obtain_logits(logits, sampling_temp, keep_topk, keep_topp):
             ignore = torch.lt(logits, kth_best)
             logits = logits.masked_fill(ignore, -10000)
 
-        dist = torch.distributions.Multinomial(
-            logits=logits, total_count=1)
-        topk_ids = torch.argmax(dist.sample(), dim=1, keepdim=True)
-        topk_scores = logits.gather(dim=1, index=topk_ids)
-    return logits, topk_ids, topk_scores
+        if return_topk:
+            dist = torch.distributions.Multinomial(
+                logits=logits, total_count=1)
+            topk_ids = torch.argmax(dist.sample(), dim=1, keepdim=True)
+            topk_scores = logits.gather(dim=1, index=topk_ids)
+    if return_topk:
+        return logits, topk_ids, topk_scores
+    else:
+        return logits
 
 
 def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp):

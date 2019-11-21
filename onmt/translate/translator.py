@@ -841,7 +841,7 @@ class Translator(object):
         if topk is not None or topp is not None:
             for idx in range(len(log_probs)):
                 logits = log_probs[idx]
-                log_probs[idx] = _obtain_logits(logits, 1.0, topk, topp)[0]
+                log_probs[idx] = _obtain_logits(logits, 1.0, topk, topp, False)
 
         log_probs[:, :, self._tgt_pad_idx] = 0
         gold = tgt[1:]
