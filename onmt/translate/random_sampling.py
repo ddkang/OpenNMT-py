@@ -46,12 +46,14 @@ def _obtain_logits(logits, sampling_temp, keep_topk, keep_topp,
         # Do top-p first
         if keep_topp > 0:
             logits_sort = torch.sort(logits, dim=1, descending=True)[0]
-            probs = F.softmax(logits, dim=1)
+            probs = F.softmax(logits_sort, dim=1)
             psum = torch.cumsum(probs, dim=1)
+
             logits_masked = torch.where(
                     psum < keep_topp, logits_sort,
                     torch.ones_like(logits_sort) * 1000000)
             min_logits = torch.min(logits_masked, dim=1)[0]
+            min_logits = torch.min(min_logits, logits_sort[:, 0])
             min_logits = min_logits.unsqueeze(-1).repeat(1, logits.size()[1])
 
             ignore = torch.lt(logits, min_logits)
